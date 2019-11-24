@@ -1,18 +1,18 @@
 #include <iostream>
+#include <algorithm>
+#include <string>
 
 using namespace std;
 
 struct node {
 	long long value;
-
-	node* nextVersion;
 	node* left, *right;
 
-	node() : value(0LL), nextVersion(NULL), left(NULL), right(NULL) {}
+	node() : value(0LL), left(NULL), right(NULL) {}
 
-	node(long long v) : value(v), nextVersion(NULL), left(NULL), right(NULL) {}
+	node(long long v) : value(v), left(NULL), right(NULL) {}
 
-	node(long long v, node* l, node* r) : value(v), nextVersion(NULL), left(l), right(r) {}
+	node(long long v, node* l, node* r) : value(v), left(l), right(r) {}
 };
 
 struct indexedElement {
@@ -30,46 +30,23 @@ struct indexedElement {
 	}
 };
 
+bool cmp(const indexedElement &a, const indexedElement &b) {
+	if (a.value < b.value)
+		return true;
+	return false;
+}
+
 struct request {
 	int l, r;
 	int x, y;
 
 	request() : l(0), r(0), x(0), y(0) {}
-
-	request(int l, int r, int x, int y) : l(l), r(r), x(x), y(y) {}
 };
 
 class PersTree {
 	int n;
 	indexedElement* allElements;
-	node* zeroVerRoot;
-
-	void sortElements(indexedElement* elements, int k) {
-		int i = 0, j = k - 1;
-		indexedElement temp, p;
-
-		p = elements[k >> 1];
-
-		while (i <= j) {
-			while (elements[i].value < p.value)
-				i++;
-			while (elements[j].value > p.value)
-				j--;
-
-			if (i <= j) {
-				temp.copy(elements[i]);
-				elements[i].copy(elements[j]);
-				elements[j].copy(temp);
-				i++;
-				j--;
-			}
-		}
-
-		if (j > 0)
-			sortElements(elements, j);
-		if (k > i)
-			sortElements(elements + i, k - i);
-	}
+	node** versionRoots;
 
 	void buildZeroTree(node* root, int left, int right) {
 		if (left == right)
@@ -81,24 +58,47 @@ class PersTree {
 		buildZeroTree(root->right, mid + 1, right);
 	}
 
-	void addNewVersion(node* root, int ind, int left, int right) {
+	node* addNewVersion(node* root, int ind, int left, int right) {
 		if (ind <= left && right <= ind)
-			root->nextVersion = new node(1LL);
+			return new node(1LL);
 
 		if (right < ind || ind < left)
-			return;
+			return root;
 
 		int mid = (left + right) / 2;
-		addNewVersion(root->left, ind, left, mid);
-		addNewVersion(root->right, ind, mid + 1, right);
-
-		if (root->left->nextVersion != NULL)
-			root->nextVersion = new node(root->value + 1LL, root->left->nextVersion, root->right);
-		if (root->right->nextVersion != NULL)
-			root->nextVersion = new node(root->value + 1LL, root->left, root->right->nextVersion);
+		node* res = new node(root->value + 1);
+		if (ind <= mid) {
+			res->right = root->right;
+			res->left = addNewVersion(root->left, ind, left, mid);
+		} 
+		else {
+			res->left = root->left;
+			res->right = addNewVersion(root->right, ind, mid + 1, right);
+		}
+		return res;
 	}
 
-	int getVersionNumber(int v) {
+	int getLeftVersionNumber(int v) {
+		if (v <= allElements[0].value)
+			return -1;
+
+		int l = 0;
+		int r = n - 1;
+		int mid = 0;
+		while (l <= r) {
+			mid = (l + r) / 2;
+			if (allElements[mid].value >= v)
+				r = mid - 1;
+			else
+				l = mid + 1;
+		}
+		return r;
+	}
+
+	int getRightVersionNumber(int v) {
+		if (v >= allElements[n - 1].value)
+			return n - 1;
+
 		int l = 0;
 		int r = n - 1;
 		int mid = 0;
@@ -109,25 +109,18 @@ class PersTree {
 			else
 				l = mid + 1;
 		}
-		return allElements[r].index;
-	}
-
-	node* getRootVersion(int vers) {
-		node* root = zeroVerRoot;
-		for (int i = 0; i < vers; i++)
-			root = zeroVerRoot->nextVersion;
-		return root;
+		return r;
 	}
 
 	long long getAmount(node* root, int l, int r, int left, int right) {
 		if (l <= left && right <= r)
 			return root->value;
-		
+
 		if (right < l || r < left)
 			return 0LL;
 
 		int mid = (left + right) / 2;
-		return getAmount(root->left, l, r, left, mid) + 
+		return getAmount(root->left, l, r, left, mid) +
 			getAmount(root->right, l, r, mid + 1, right);
 	}
 
@@ -137,22 +130,47 @@ public:
 		for (int i = 0; i < n; i++)
 			allElements[i].set((long long)values[i], i);
 
-		sortElements(allElements, n);
+		sort(allElements, allElements + n, cmp);
 
-		zeroVerRoot = new node();
-		buildZeroTree(zeroVerRoot, 0, n - 1);
+		versionRoots = new node*[n + 1];
+		versionRoots[0] = new node();
+		buildZeroTree(versionRoots[0], 0, n - 1);
 
-		node* root = zeroVerRoot;
-		for (int i = 0; i < n; i++) {
-			addNewVersion(root, allElements[i].index, 0, n - 1);
-			root = root->nextVersion;
-		}
+		for (int i = 0; i < n; i++)
+			versionRoots[i+1] = addNewVersion(versionRoots[i], allElements[i].index, 0, n - 1);
 	}
 
 	long long processRequest(request req) {
-		int indX = getVersionNumber(req.x);
-		int indY = getVersionNumber(req.y);
+		int indX = getLeftVersionNumber(req.x);
+		int indY = getRightVersionNumber(req.y);
 
+		long long y = getAmount(versionRoots[indY + 1], req.l - 1, req.r - 1, 0, n - 1);
+		long long x = getAmount(versionRoots[indX + 1], req.l - 1, req.r - 1, 0, n - 1);
 
+		return y - x;
 	}
 };
+
+int main() {
+	ios::sync_with_stdio(false);
+	int n, q;
+	cin >> n >> q;
+
+	int* elements = new int[n];
+	request* requests = new request[q];
+	string result = "";
+
+	for (int i = 0; i < n; i++)
+		cin >> elements[i];
+
+	for (int j = 0; j < q; j++)
+		cin >> requests[j].l >> requests[j].r >> requests[j].x >> requests[j].y;
+
+	PersTree segmentTree(n, elements);
+
+	for (int i = 0; i < q; i++)
+		result.append(to_string(segmentTree.processRequest(requests[i])) + '\n');
+	cout << result;
+
+	return 0;
+}
